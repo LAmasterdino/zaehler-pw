@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zugang</title>
+<style>
+  :root { --bg:#f3f4f8; --card:#fff; --text:#1c1e26; --muted:#6b7080; --accent:#4f46e5; --err:#d93636; --ok:#1f9d55; --border:#d9dce6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12131a; --card:#1c1e29; --text:#eceef6; --muted:#9298ad; --accent:#818cf8; --err:#ff6b6b; --ok:#4ade80; --border:#33364a; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,sans-serif; padding:16px; }
+  .card { width:100%; max-width:360px; background:var(--card); border:1px solid var(--border); border-radius:16px; padding:28px 24px; box-shadow:0 8px 30px rgba(0,0,0,.08); }
+  h1 { font-size:1.35rem; margin:0 0 6px; text-align:center; }
+  p.sub { margin:0 0 20px; text-align:center; color:var(--muted); font-size:.9rem; }
+  .lock { font-size:2rem; text-align:center; margin-bottom:8px; }
+  input { width:100%; padding:12px 14px; font-size:1rem; border:1px solid var(--border); border-radius:10px; background:transparent; color:var(--text); }
+  input:focus { outline:2px solid var(--accent); border-color:transparent; }
+  button { width:100%; margin-top:12px; padding:12px; font-size:1rem; font-weight:600; border:0; border-radius:10px; background:var(--accent); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:default; }
+  #error { min-height:1.2em; margin:10px 0 0; text-align:center; color:var(--err); font-size:.88rem; }
+  .shake { animation:shake .35s; }
+  @keyframes shake { 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
+  dialog { border:1px solid var(--border); border-radius:16px; background:var(--card); color:var(--text); max-width:340px; width:calc(100% - 32px); padding:24px; text-align:center; }
+  dialog::backdrop { background:rgba(0,0,0,.5); }
+  dialog h2 { margin:0 0 10px; font-size:1.2rem; }
+  dialog p { margin:0 0 6px; line-height:1.5; }
+  #notifyState { font-size:.8rem; color:var(--muted); }
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="lock">🔐</div>
+    <h1>Zugang</h1>
+    <p class="sub">Bitte gib deine Passphrase ein.</p>
+    <input type="password" id="pass" placeholder="Passphrase" autocomplete="off" autofocus>
+    <button id="btn">Anmelden</button>
+    <p id="error" role="alert"></p>
+  </div>
+
+  <dialog id="popup">
+    <h2 id="popupTitle">Willkommen!</h2>
+    <p id="popupText"></p>
+    <p id="notifyState"></p>
+    <button id="close">Schließen</button>
+  </dialog>
+
+<script>
+/* ============ KONFIGURATION ============ */
+
+// Erlaubte Passphrasen (Groß-/Kleinschreibung wird beachtet). Beliebig erweiterbar.
+// Optional pro Passphrase eine eigene Nachricht für das Pop-up.
+const PASSPHRASEN = [
+  { phrase: "moin",  message: "Passwort: 12345678 Name? Finde selber heraus!" },
+  { phrase: "blauer-Himmel",  message: "Gut gemacht – du kennst das Geheimnis." },
+  { phrase: "Kaffee&Kuchen",  message: "Hier ist deine Nachricht: Viel Spaß!" },
+  // { phrase: "weitere-Passphrase", message: "Eigener Text" },
+];
+
+// Standardtext, falls bei einer Passphrase keine message angegeben ist
+const STANDARD_NACHRICHT = "Zugang gewährt.";
+
+// ntfy-Einstellungen
+const NTFY_SERVER = "https://ntfy.sh";        // oder dein eigener Server
+const NTFY_TOPIC  = "zaehler_do_v1_alert_acess_ekkghkjwvw82ot7cu2j29f82jf9hk48fbeog94";    // <- unbedingt anpassen!
+const NTFY_TEXT   = "Passphrase wurde eingegeben";  // Text der Benachrichtigung
+const NTFY_TOKEN  = "";                        // optional: Bearer-Token (z. B. "tk_...")
+
+/* ============ LOGIK ============ */
+
+const $ = id => document.getElementById(id);
+const input = $("pass"), btn = $("btn"), err = $("error"), card = $("card");
+const popup = $("popup");
+
+async function sendeNtfy(phrase) {
+  const headers = { "Content-Type": "application/json" };
+  if (NTFY_TOKEN) headers["Authorization"] = "Bearer " + NTFY_TOKEN;
+  const res = await fetch(NTFY_SERVER, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      topic: NTFY_TOPIC,
+      title: "Login-Seite",
+      message: NTFY_TEXT + "\nPassphrase: " + phrase,
+      tags: ["key"]
+    })
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+}
+
+async function pruefen() {
+  const eingabe = input.value.trim();
+  err.textContent = "";
+  if (!eingabe) { err.textContent = "Bitte eine Passphrase eingeben."; return; }
+
+  const treffer = PASSPHRASEN.find(p => p.phrase === eingabe);
+  if (!treffer) {
+    err.textContent = "Falsche Passphrase.";
+    card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+    input.select();
+    return;
+  }
+
+  btn.disabled = true;
+  $("popupText").textContent = treffer.message || STANDARD_NACHRICHT;
+  $("notifyState").textContent = "Sende Benachrichtigung …";
+  popup.showModal();
+
+  try {
+    await sendeNtfy(eingabe);
+    $("notifyState").textContent = "✓ Benachrichtigung gesendet";
+  } catch (e) {
+    $("notifyState").textContent = "⚠ Benachrichtigung fehlgeschlagen (" + e.message + ")";
+  }
+  btn.disabled = false;
+  input.value = "";
+}
+
+btn.addEventListener("click", pruefen);
+input.addEventListener("keydown", e => { if (e.key === "Enter") pruefen(); });
+$("close").addEventListener("click", () => popup.close());
+</script>
+</body>
+</html>
